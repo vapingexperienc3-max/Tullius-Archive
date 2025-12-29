@@ -179,21 +179,22 @@ jobs:
               html += "<ul style='margin:0; padding:15px 25px 20px 45px; list-style-type:none;'>"
               
               for f in node_data['_files']:
-                  # [필수] f_path 정의: 현재 파일의 전체 경로 생성
-                  f_path = os.path.join(full_path, f)
+                  # 1. 경로 생성 및 정규화 (NFC로 한글 깨짐 방지)
+                  # os.path.join 후 바로 NFC 정규화를 먹여서 변수 하나로 끝냅니다.
+                  full_raw_path = os.path.join(full_path, f).replace('\\', '/')
+                  clean_path = unicodedata.normalize('NFC', full_raw_path)
+
+                  # 2. URL 인코딩 (404 방지 핵심: 폴더별로 쪼개서 인코딩 후 합치기)
+                  url = "/".join([urllib.parse.quote(p) for p in clean_path.split('/')])
                   
-                  # [필수] NFC 정규화 및 URL 인코딩: 404 에러 방지 핵심 로직
-                  f_path_nfc = unicodedata.normalize('NFC', f_path.replace('\\', '/'))
-                  url = "/".join([urllib.parse.quote(p) for p in f_path_nfc.split('/')])
-                  
-                  # 화면 표시용 가공
+                  # 3. 화면 표시용 가공
+                  # 파일명에서 확장자와 채널명 등을 제거하여 깔끔하게 만듭니다.
                   disp = f.replace('.html', '').split(' (')[0].replace(' - 툴리우스 채널', '')
                   f_icon = f"<img src='pipboy.png' style='width:25px; margin-right:10px; vertical-align:middle;'>" if is_rr else f"<img src='ElderScroll.webp' style='width:30px; margin-right:10px; vertical-align:middle;'>"
                   link_class = "file-link-v" if is_rr else "file-link-f"
                   
-                  html += f'<li style="margin:12px 0;"><a href="{url}" target="_blank" class="{link_class}">{f_icon}{disp}</a></li>'
-              
-              html += "</ul>"
+                  # 4. 최종 HTML 생성 (상대 경로 ./ 명시)
+                  html += f'<li style="margin:12px 0;"><a href="./{url}" target="_blank" class="{link_class}">{f_icon}{disp}</a></li>'
               
               # 2. 하위 폴더 리스트 처리 (재귀 호출)
               for child_name, child_data in node_data['_dirs'].items():
