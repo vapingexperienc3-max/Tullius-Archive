@@ -179,28 +179,27 @@ jobs:
               html += "<ul style='margin:0; padding:15px 25px 20px 45px; list-style-type:none;'>"
               
               for f in node_data['_files']:
-                  # 1. 파일명 자체를 NFC로 강제 변환 (오염된 파일명 세탁)
+                  # 1. 파일명 정규화 (오염 방지)
                   f_fixed = unicodedata.normalize('NFC', f)
-    
-                  # 2. 경로 생성 시 세탁된 파일명(f_fixed) 사용
+                  
+                  # 2. 경로 생성 (가장 담백하게)
+                  # full_path가 이미 'Archive/folder' 형태를 가지고 있으므로 그대로 둡니다.
                   full_raw_path = os.path.join(full_path, f_fixed).replace('\\', '/')
                   clean_path = unicodedata.normalize('NFC', full_raw_path)
 
-                  # 3. URL 인코딩
+                  # 3. URL 인코딩 (GPT의 추천대로 군더더기 싹 제거)
+                  # 점(.)이나 Archive/ 하드코딩 없이, 파일 시스템 경로 그 자체를 인코딩합니다.
                   url_parts = [urllib.parse.quote(p) for p in clean_path.split('/') if p]
                   url = "/".join(url_parts)
                   
-                  if not url.startswith("Archive"):
-                      url = "Archive/" + url
-                  
-                  # 3. 화면 표시용 가공
-                  # 파일명에서 확장자와 채널명 등을 제거하여 깔끔하게 만듭니다.
+                  # 4. 화면 표시용 가공
                   disp = f_fixed.replace('.html', '').split(' (')[0].replace(' - 툴리우스 채널', '')
                   f_icon = f"<img src='pipboy.png' style='width:25px; margin-right:10px; vertical-align:middle;'>" if is_rr else f"<img src='ElderScroll.webp' style='width:30px; margin-right:10px; vertical-align:middle;'>"
                   link_class = "file-link-v" if is_rr else "file-link-f"
                   
-                  # 4. 최종 HTML 생성 (상대 경로 ./ 명시)
-                  html += f'<li style="margin:12px 0;"><a href="{url}" target="_blank" class="{link_class}">{f_icon}{disp}</a></li>'
+                  # 5. 최종 링크 생성 (상대 경로의 정석: ./ 사용)
+                  # 이렇게 하면 index.html이 루트에 있으므로 'Archive/폴더/파일.html'로 정확히 연결됩니다.
+                  html += f'<li style="margin:12px 0;"><a href="./{url}" target="_blank" class="{link_class}">{f_icon}{disp}</a></li>'
               
               # 2. 하위 폴더 리스트 처리 (재귀 호출)
               for child_name, child_data in node_data['_dirs'].items():
