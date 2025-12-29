@@ -450,9 +450,9 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: '.'
+          path: '.'  # 파이썬이 만든 index.html을 포함한 현재 폴더 전체를 업로드
 
-  # 2. 여기서부터는 위쪽의 build: 와 똑같이 맨 왼쪽(공백 2칸)으로 바짝 붙어야 합니다.
+  # 여기서부터는 build: 와 같은 라인 (맨 왼쪽에서 공백 2칸)
   deploy:
     needs: build
     runs-on: ubuntu-latest
@@ -466,5 +466,4 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-
             
