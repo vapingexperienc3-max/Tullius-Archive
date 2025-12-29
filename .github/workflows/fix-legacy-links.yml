@@ -1,0 +1,29 @@
+name: One-time legacy link fix
+
+on:
+  workflow_dispatch: # 이 설정 덕분에 우리가 버튼을 눌러서 실행할 수 있습니다.
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: pip install beautifulsoup4
+
+      - name: Run link washer
+        run: python fix_links.py
+
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add .
+          # 수정된 파일이 있을 때만 커밋합니다.
+          git diff --quiet && git diff --staged --quiet || (git commit -m "fix: wash legacy absolute links" && git push)
