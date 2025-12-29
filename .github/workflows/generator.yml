@@ -187,16 +187,20 @@ jobs:
                   clean_path = unicodedata.normalize('NFC', full_raw_path)
 
                   # 3. URL 인코딩
-                  url = "/".join([urllib.parse.quote(p) for p in clean_path.split('/')])
+                  url_parts = [urllib.parse.quote(p) for p in clean_path.split('/') if p]
+                  url = "/".join(url_parts)
+                  
+                  if not url.startswith("Archive"):
+                      url = "Archive/" + url
                   
                   # 3. 화면 표시용 가공
                   # 파일명에서 확장자와 채널명 등을 제거하여 깔끔하게 만듭니다.
-                  disp = f.replace('.html', '').split(' (')[0].replace(' - 툴리우스 채널', '')
+                  disp = f_fixed.replace('.html', '').split(' (')[0].replace(' - 툴리우스 채널', '')
                   f_icon = f"<img src='pipboy.png' style='width:25px; margin-right:10px; vertical-align:middle;'>" if is_rr else f"<img src='ElderScroll.webp' style='width:30px; margin-right:10px; vertical-align:middle;'>"
                   link_class = "file-link-v" if is_rr else "file-link-f"
                   
                   # 4. 최종 HTML 생성 (상대 경로 ./ 명시)
-                  html += f'<li style="margin:12px 0;"><a href="./{url}" target="_blank" class="{link_class}">{f_icon}{disp}</a></li>'
+                  html += f'<li style="margin:12px 0;"><a href="{url}" target="_blank" class="{link_class}">{f_icon}{disp}</a></li>'
               
               # 2. 하위 폴더 리스트 처리 (재귀 호출)
               for child_name, child_data in node_data['_dirs'].items():
