@@ -1,0 +1,82 @@
+
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+\n>\n(function() {\n    console.log("🚀 Resolver Loaded for: " + window.location.pathname);\n    const backupLinkMap = {};\n    function handleLink(e) {\n        const a = e.target.closest('a');\n        if (!a || !a.href || a.href.indexOf('arca.live') === -1) return;\n        const parts = a.href.split('/');\n        const lastPart = parts[parts.length - 1].split('?')[0].split('#')[0];\n        const articleId = lastPart.replace(/[^0-9]/g, '');\n        if (articleId && backupLinkMap[articleId]) {\n            e.preventDefault(); e.stopImmediatePropagation();\n            const repoName = "Tullius-ferry";\n            const path = window.location.pathname;\n            const repoBase = path.substring(0, path.toLowerCase().indexOf(repoName.toLowerCase()) + repoName.length);\n            const targetPath = backupLinkMap[articleId].replace(/\\/g, '/');\n            const finalUrl = window.location.origin + repoBase + "/" + encodeURI(targetPath);\n            console.log('✅ Redirecting:', finalUrl);\n            window.location.href = finalUrl; return false;\n        }\n    }\n    document.addEventListener('click', handleLink, true);\n    document.addEventListener('mousedown', handleLink, true);\n})();\n</script>
+    <style id="final-nuclear-option">
+      /* 1. 모든 레이아웃 간섭 제거 및 중앙 정렬 */
+      html, body { background-color: #f8f9fa !important; }
+      .fr-view, .article-content, #content, .main-container, article { 
+        max-width: 1000px !important; 
+        width: 95% !important; 
+        margin: 20px auto !important; 
+        padding: 20px !important;
+        background: white !important;
+        display: block !important;
+        position: static !important;
+        box-shadow: 0 0 10px rgba(0,0,0,0.1) !important;
+      }
+      /* 2. 이미지와 표가 화면을 찢는 것 방지 */
+      img { max-width: 100% !important; height: auto !important; }
+      table { width: 100% !important; table-layout: fixed !important; }
+      /* 3. 파란 딱지(SVG) 크기 강제 고정 */
+      svg, .icon { width: 24px !important; height: 24px !important; max-width: 24px !important; }
+      /* 4. 불필요한 UI 완전 제거 */
+      .navbar-wrapper, .user-info, .side-menu, #footer { display: none !important; }
+    </style>
+    
+    <style id="pure-arca-fix">
+      /* 전체 너비 제한 해제 및 중앙 정렬 */
+      html, body { 
+          width: 100% !important; 
+          min-width: auto !important; 
+          background-color: #f2f2f2 !important; 
+      }
+      /* 본문 컨테이너: 원본 비율 유지하며 깃허브 페이지에 맞게 조정 */
+      .main-container, .article-content, #content { 
+          max-width: 1200px !important; 
+          width: 95% !important; 
+          margin: 0 auto !important; 
+          background: #fff !important;
+      }
+      /* 거대 아이콘 방지 (핵심) */
+      svg, .icon { width: 24px !important; height: 24px !important; max-width: 24px !important; }
+      /* 잉여 웹 UI 박멸 */
+      .navbar-wrapper, .user-info, .side-menu, #footer, .bottom-container { display: none !important; }
+      /* 이미지와 표가 삐져나오는 것 방지 */
+      img { max-width: 100% !important; height: auto !important; }
+      table { width: 100% !important; table-layout: auto !important; }
+    </style>
+    
