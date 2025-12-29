@@ -179,12 +179,14 @@ jobs:
               html += "<ul style='margin:0; padding:15px 25px 20px 45px; list-style-type:none;'>"
               
               for f in node_data['_files']:
-                  # 1. 경로 생성 및 정규화 (NFC로 한글 깨짐 방지)
-                  # os.path.join 후 바로 NFC 정규화를 먹여서 변수 하나로 끝냅니다.
-                  full_raw_path = os.path.join(full_path, f).replace('\\', '/')
+                  # 1. 파일명 자체를 NFC로 강제 변환 (오염된 파일명 세탁)
+                  f_fixed = unicodedata.normalize('NFC', f)
+    
+                  # 2. 경로 생성 시 세탁된 파일명(f_fixed) 사용
+                  full_raw_path = os.path.join(full_path, f_fixed).replace('\\', '/')
                   clean_path = unicodedata.normalize('NFC', full_raw_path)
 
-                  # 2. URL 인코딩 (404 방지 핵심: 폴더별로 쪼개서 인코딩 후 합치기)
+                  # 3. URL 인코딩
                   url = "/".join([urllib.parse.quote(p) for p in clean_path.split('/')])
                   
                   # 3. 화면 표시용 가공
