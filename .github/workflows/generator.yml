@@ -179,7 +179,6 @@ jobs:
               html += "<ul style='margin:0; padding:15px 25px 20px 45px; list-style-type:none;'>"
               
               for f in node_data['_files']:
-                  for f in node_data['_files']:
                   # 1. 파일명 자체를 NFC로 강제 변환 (오염된 파일명 세탁)
                   f_fixed = unicodedata.normalize('NFC', f)
     
