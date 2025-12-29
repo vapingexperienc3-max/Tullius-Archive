@@ -1,0 +1,470 @@
+name: Generate Index
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # 파일 수정 및 커밋 권한
+      pages: write      # GitHub Pages 배포 권한 (필수!)
+      id-token: write   # 배포 인증을 위한 토큰 권한 (필수!)
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate nested index.html
+        run: |
+          python <<'EOF'
+          import os
+          import re
+          import urllib.parse
+          import unicodedata
+         
+          # 1. 매핑 준비 및 함수 정의
+          link_map = {}
+          skyrim_pack_names = ["뷰리다", "애니림", "짬뽕림", "뉴상림", "mz팩", "로어림", "Ferry"]
+          fallout_pack_names = ["짬통팩", "스위트폴"]
+
+          # [추가] 통합 링크 및 인코딩 패치 함수
+          def fix_all_links(filepath):
+              try:
+                  with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                      content = f.read()
+                  
+                  # 1) 한글 파일명 정규화 (NFC) - 404 방지 핵심
+                  new_content = unicodedata.normalize('NFC', content)
+                  
+                  # 2) 혹시 남아있을 수 있는 잘못된 도메인 주소를 현재 기준으로 통합
+                  # (이미 상대경로 처리가 되었겠지만, 한 번 더 검구)
+                  changed = (content != new_content)
+                  
+                  if changed:
+                      with open(filepath, 'w', encoding='utf-8') as f:
+                          f.write(new_content)
+                      return True
+                  return False
+              except:
+                  return False
+
+          def inject_width_style(filepath, link_map_data):
+              try:
+                  with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                      content = f.read()
+                  
+                  # 1. 아카라이브 링크 -> 폴더 포함 상대 경로로 무조건 변환
+                  def link_replacer(match):
+                      aid = match.group(1)
+                      if aid in link_map_data:
+                          target_path = link_map_data[aid]
+                          
+                          # [핵심] 현재 파일의 위치를 계산해서 '상위 폴더'로 가는 ../ 개수를 맞춥니다.
+                          # 예: 2단계 깊이면 ../../ 를 붙여서 루트로 강제 이동 후 다시 내려감
+                          depth = len(os.path.relpath(filepath, '.').split(os.sep)) - 1
+                          prefix = "../" * depth if depth > 0 else "./"
+                          
+                          # 경로의 각 부분(폴더명, 파일명)을 안전하게 인코딩
+                          parts = [urllib.parse.quote(p) for p in target_path.split('/')]
+                          safe_path = "/".join(parts)
+                          
+                          return f'href="{prefix}{safe_path}"'
+                      return match.group(0)
+
+                  # 링크 변환 실행 (중복 실행되어도 상관없음)
+                  content = re.sub(r'href="?https://arca\.live/b/[^/"\'\s> ]+/(\d+)[^"\'\s> ]*"?', link_replacer, content, flags=re.IGNORECASE)
+
+                  # 2. 닉네임 제거
+                  for nick in ["Ryl3", "ryl3", "RYL3"]:
+                      content = content.replace(nick, "")
+                  
+                  # 3. 모바일 최적화 스타일 (중복 삽입 방지)
+                  style_tag = '<style>body, .fr-view { max-width: 100% !important; width: 100% !important; margin: 0 !important; padding: 10px !important; } img { max-width: 100% !important; height: auto !important; }</style>'
+                  if style_tag not in content:
+                      if '<head>' in content.lower():
+                          content = re.sub(r'(<head.*?>)', r'\1\n' + style_tag + '\n', content, flags=re.IGNORECASE)
+
+                  # 4. 무조건 저장 (기존 if changed 로직 제거)
+                  with open(filepath, 'w', encoding='utf-8') as f:
+                      f.write(content)
+                  return True
+              except Exception as e:
+                  print(f"Error in inject_width_style: {e}")
+                  return False
+
+          # 2. 파일 탐색 및 매핑 (1차 순회)
+          print("--- 1단계: 모든 폴더 탐색 및 매핑 시작 ---")
+          for root, dirs, files in os.walk('.'):
+              # 숨김 폴더 제외
+              dirs[:] = [d for d in dirs if not d.startswith('.')]
+              for f in files:
+                  if f.endswith('.html') and f not in ['index.html', '404.html']:
+                      path = os.path.join(root, f)
+                      
+                      aid = None
+                      # 파일명에서 숫자 추출 (7~11자리)
+                      nums = re.findall(r'\d{7,11}', f)
+                      if nums: aid = nums[0]
+                      
+                      # 파일명에 숫자가 없으면 본문 앞부분에서 추출
+                      if not aid:
+                          try:
+                              with open(path, 'r', encoding='utf-8', errors='ignore') as tmp:
+                                  m = re.search(r'arca\.live/b/[^/]+/(\d+)', tmp.read(5000))
+                                  if m: aid = m.group(1)
+                          except: pass
+                      
+                      if aid:
+                          # [핵심 수정] 파일명만 넣는 게 아니라, 폴더 경로를 포함한 상대 경로를 저장
+                          # 예: '폴더/파일.html' 형태로 저장되어 깃허브가 정확히 찾아가게 함
+                          rel_p = os.path.relpath(path, '.').replace('\\', '/')
+                          link_map[aid] = rel_p
+                          print(f"🔗 매핑 성공: {aid} -> {rel_p}")
+
+          # 3. 실제 수정 작업 실행 (2차 순회)
+          print(f"\n--- 2단계: 본문 수정 및 경로 갱신 시작 (총 {len(link_map)}개 대상) ---")
+          for root, dirs, files in os.walk('.'):
+              for f in files:
+                  if f.endswith('.html') and f not in ['index.html', '404.html']:
+                      full_p = os.path.join(root, f)
+                      
+                      # 1) 스타일 및 새 경로(link_map) 주입
+                      # inject_width_style 함수가 내부적으로 무조건 파일을 저장하게 되어 있다면 성공이 뜰 겁니다.
+                      if inject_width_style(full_p, link_map):
+                          # 2) 한글 파일명 정규화(NFC) 및 최종 저장
+                          # 이 과정에서 경로 정보가 포함된 링크가 파일에 완전히 박히게 됩니다.
+                          if fix_all_links(full_p):
+                              print(f"✔️ 경로/인코딩 패치 완료: {full_p}")
+                          else:
+                              print(f"✔️ 스타일/경로 갱신 완료: {full_p}")
+                      else:
+                          # 파일이 열리지 않거나 권한 문제일 경우
+                          print(f"❌ 작업 실패 (파일 확인 필요): {full_p}")
+
+          # 4. 트리 생성 및 인덱스 제작 로직 시작
+          tree = {}
+          for root, dirs, files in sorted(os.walk('.')):
+              dirs[:] = [d for d in dirs if not d.startswith('.')]
+              html_files = [f for f in files if f.endswith('.html') and f != 'index.html']
+              rel_path = os.path.relpath(root, '.')
+              if rel_path == "." or rel_path.startswith('.'): continue
+              parts = rel_path.split(os.sep)
+              curr = tree
+              for p in parts:
+                  if p not in curr: curr[p] = {'_files': [], '_dirs': {}}
+                  curr = curr[p]['_dirs']
+              curr_node = tree
+              for p in parts[:-1]: curr_node = curr_node[p]['_dirs']
+              curr_node[parts[-1]]['_files'] = sorted(html_files)
+
+          def render_tree(node_name, node_data, depth, is_rr, full_path):
+              icon = "pipboy.png" if is_rr else "ElderScroll.webp"
+              text_color = "#FFB000" if is_rr else "#fff"
+              bg_color = "rgba(0,0,0,0.6)"
+              border_color = "rgba(255,176,0,0.3)" if is_rr else "rgba(255,255,255,0.1)"
+              img_w = "45px" if is_rr else "55px"
+              img_style = f"width:{img_w}; aspect-ratio:1/1; object-fit:contain; margin-right:12px; vertical-align:middle;"
+              if is_rr: img_style += " margin-top:-2px;" # 원본 색상 유지를 위해 필터 제외
+              
+              margin = f"margin-left:{depth * 15}px;"
+              html = f"<div style='{margin} margin-bottom:12px; width:100%;' class='tree-node'>"
+              html += f"<details open style='background:{bg_color}; border:1px solid {border_color}; border-radius:12px; overflow:hidden;'>"
+              html += f"<summary style='padding:15px; font-weight:bold; color:{text_color}; cursor:pointer; list-style:none; display:flex; align-items:center; background:rgba(255,255,255,0.03); border-bottom:1px solid {border_color};'>"
+              html += f"<img src='{icon}' style='{img_style}'>{node_name}</summary>"
+              html += "<ul style='margin:0; padding:15px 25px 20px 45px; list-style-type:none;'>"
+              
+              for f in node_data['_files']:
+                  # [필수] f_path 정의: 현재 파일의 전체 경로 생성
+                  f_path = os.path.join(full_path, f)
+                  
+                  # [필수] NFC 정규화 및 URL 인코딩: 404 에러 방지 핵심 로직
+                  f_path_nfc = unicodedata.normalize('NFC', f_path.replace('\\', '/'))
+                  url = "/".join([urllib.parse.quote(p) for p in f_path_nfc.split('/')])
+                  
+                  # 화면 표시용 가공
+                  disp = f.replace('.html', '').split(' (')[0].replace(' - 툴리우스 채널', '')
+                  f_icon = f"<img src='pipboy.png' style='width:25px; margin-right:10px; vertical-align:middle;'>" if is_rr else f"<img src='ElderScroll.webp' style='width:30px; margin-right:10px; vertical-align:middle;'>"
+                  link_class = "file-link-v" if is_rr else "file-link-f"
+                  
+                  html += f'<li style="margin:12px 0;"><a href="{url}" target="_blank" class="{link_class}">{f_icon}{disp}</a></li>'
+              
+              html += "</ul>"
+              
+              # 2. 하위 폴더 리스트 처리 (재귀 호출)
+              for child_name, child_data in node_data['_dirs'].items():
+                  # 하위 폴더 탐색 시에도 os.path.join으로 경로를 정확히 합쳐서 넘깁니다.
+                  html += render_tree(child_name, child_data, depth+1, is_rr, os.path.join(full_path, child_name))
+              
+              html += f"</details></div>"
+              return html
+
+          main_contents = {"ferry": "", "railroad": ""}
+          sidebar_data = {"ferry": {"modpack": "", "normal": ""}, "railroad": {"modpack": "", "normal": ""}}
+          for top_folder, data in tree.items():
+              is_rr = any(k in top_folder.upper() for k in ["FALLOUT", "폴아웃"]) or any(k in top_folder for k in fallout_pack_names)
+              theme_key = "railroad" if is_rr else "ferry"
+              fid = "f-" + "".join(filter(str.isalnum, top_folder))
+              main_contents[theme_key] += f"<div id='{fid}' class='cat-content' style='display:none; width:100%;'>" + render_tree(top_folder, data, 0, is_rr, top_folder) + "</div>"
+              is_modpack = any(k in top_folder for k in skyrim_pack_names + fallout_pack_names) or "[모드팩]" in top_folder
+              category = "modpack" if is_modpack else "normal"
+              link_cls = "sidebar-link-v" if is_rr else "sidebar-link-f"
+              sidebar_data[theme_key][category] += f"<a href='javascript:void(0)' onclick='showCat(\"{fid}\")' class='sidebar-link {link_cls}' id='l-{fid}'>- {top_folder}</a>"
+
+          with open('index.html', 'w', encoding='utf-8') as f:
+              f.write("<!DOCTYPE html><html lang='ko'><head><meta charset='UTF-8'><title>Tullius' Archive</title><style>")
+              f.write("html { overflow-y: scroll; scroll-behavior: smooth; }")
+              f.write("body { margin:0; min-height:100vh; background-color:#000; font-family:sans-serif; color:#eee; overflow-x:hidden; transition:0.4s; background-attachment: fixed !important; background-size: cover !important; }")
+              f.write("a, a:link, a:visited { text-decoration: none !important; color: inherit !important; }")
+              f.write(".sidebar-link { display:block; padding:10px 0; font-size:0.95em; border-bottom:1px solid rgba(255,255,255,0.05); transition:0.3s; cursor:pointer; }")
+              f.write(".sidebar-link-f { color:#aaa !important; transition: 0.3s; }")
+              f.write(".sidebar-link-f:hover, .sidebar-link-f.active { color:#fff !important; padding-left:12px; text-shadow: 0 0 10px rgba(255,255,255,0.8), 0 0 20px rgba(0,200,255,0.5); }")
+              f.write(".sidebar-link-v { color:#b37d00 !important; } .sidebar-link-v:hover, .sidebar-link-v.active { color:#FFB000 !important; padding-left:5px; }")
+              f.write(".top-header { position:fixed; top:0; left:0; width:100%; height:70px; background:rgba(0,0,0,0.95); display:flex; align-items:center; justify-content:center; line-height: 1; z-index:1000; border-bottom:2px solid rgba(255,255,255,0.1); backdrop-filter:blur(5px); }")
+              f.write(".header-container { width:100%; max-width:1400px; display:flex; justify-content:space-between; align-items:center; padding:0 40px; box-sizing:border-box; }")
+              f.write(".header-btn { background:rgba(255,255,255,0.03); border:1px solid; border-radius:6px; padding:0 18px; height:42px; font-weight:bold; font-size:0.95em; display:inline-flex; align-items:center; gap:8px; transition:0.3s; cursor:pointer; color:inherit !important; justify-content:center; box-sizing:border-box; }")
+              f.write("#btn-f:hover { background:rgba(255,255,255,0.15) !important; border-color:#fff !important; box-shadow: 0 0 15px #fff; transform:translateY(-2px); }")
+              f.write("#btn-v:hover { background:rgba(255,176,0,0.15) !important; border-color:#FFB000 !important; box-shadow: 0 0 15px #FFB000; transform:translateY(-2px); }")
+              f.write(".sidebar-nav { width:330px; position:fixed; top:110px; left:40px; height:calc(100vh - 150px); background:rgba(0,0,0,0.85); border:1px solid #444; border-radius:8px; padding:25px; overflow-y:auto; z-index:100; opacity:0; visibility:hidden; transition:0.3s; box-sizing:border-box; }")
+              f.write(".sidebar-nav.active { opacity:1; visibility:visible; }")
+              f.write(".main-area { margin-left:420px; padding:110px 60px 50px 0; position:relative; z-index:10; width:calc(100% - 480px); max-width:1200px; box-sizing:border-box; }")
+              f.write("#search-bar { width:100%; box-sizing:border-box; padding:16px 25px; border-radius:30px; border:1px solid #444; background:rgba(255,255,255,0.05); color:#fff; margin:25px 0; outline:none; transition:0.3s; }")
+              f.write(".file-link-f { color: #ccc !important; transition:0.2s; }")
+              f.write(".file-link-f:hover { color:#ffffff !important; text-shadow: 0 0 8px #fff, 0 0 15px rgba(0,210,255,1), 0 0 30px rgba(0,150,255,0.8); }")
+              f.write(".file-link-v { color: #d4a017 !important; transition:0.2s; }")
+              f.write(".file-link-v:hover { color: #FFB000 !important; text-shadow: 0 0 12px rgba(255,176,0,0.9); }")
+              f.write(".modal { display:none; position:fixed; z-index:3000; left:0; top:0; width:100%; height:100%; background:rgba(0,0,0,0.9); backdrop-filter:blur(15px); }")
+              f.write(".modal-content { background:#111; margin:5% auto; padding:50px; border:1px solid #333; border-radius:15px; width:90%; max-width:1000px; position:relative; max-height:85vh; overflow-y:auto; box-sizing:border-box; }")
+              f.write("</style></head><body>")
+              f.write("<style>")
+              f.write("  .nav-btn { background:none; border:none; color:#888; cursor:pointer; font-size:0.9em; transition:0.2s; padding:5px; vertical-align:middle; }")
+              f.write("  .nav-btn:hover { color:#fff; transform: scale(1.1); }")
+              f.write("</style>")
+              f.write("<div id='bgm-player' style='position:fixed; bottom:20px; right:40px; background:rgba(0,0,0,0.85); border:1px solid rgba(255,255,255,0.15); border-radius:30px; padding:8px 18px; display:flex; align-items:center; gap:12px; z-index:3000; backdrop-filter:blur(10px); box-shadow:0 4px 15px rgba(0,0,0,0.5);'>")
+              f.write("<span id='track-info' style='font-size:0.82em; color:#bbb; min-width:140px; ...'>재생 준비 완료</span>")
+              f.write("<a href='https://www.serpentsoundstudios.com' target='_blank' title='Music by Alexander Nakarada' style='font-size:10px; color:#555 !important; margin-left:-10px;'>ⓘ</a>")
+              f.write("<button onclick='changeTrack(-1)' class='nav-btn'>◀◀</button>") 
+              f.write("<button onclick='togglePlay()' id='play-btn' style='background:none; border:none; color:#fff; cursor:pointer; font-size:1.1em; width:25px;'>▶</button>")
+              f.write("<button onclick='changeTrack(1)' class='nav-btn'>▶▶</button>")
+              f.write("<input type='range' id='volume-slider' min='0' max='1' step='0.01' value='0.5' style='width:70px; cursor:pointer; accent-color:#fff;'>")
+              f.write("<audio id='main-audio'></audio></div>")
+
+              # 가이드/후기 (고정)
+              f.write("<div id='guideModal' class='modal'><div class='modal-content'><span style='position:absolute; top:20px; right:25px; font-size:28px; cursor:pointer; color:#666;' onclick='closeModal()'>&times;</span><h3 id='modal-t' style='margin-top:0; font-size:1.8em;'>📜 가이드 및 후기</h3><div style='color:#ddd; line-height:2; font-size:1.05em;'><p><strong>💡 이용 팁:</strong><br>")
+              f.write("<span style='margin-bottom:12px; display:block;'>- 대부분의 파일은 HTML 양식으로 백업되어 있습니다. <strong>(기술적 한계로 영상은 출력되지 않습니다.)</strong></span>")
+              f.write("<span style='margin-bottom:12px; display:block;'>- <strong>질문, 피드백, 로그</strong>의 경우 일일히 버전이나 문제 유형을 구분하기 어려워 <strong>폴더 하나에 구분없이 넣었습니다.</strong> 양해 바랍니다.</span>")
+              f.write("<span style='margin-bottom:12px; display:block;'>- <strong>미해결 탭</strong>의 경우 해결되지 않았다고 생각되는 이슈들을 백업해 놓았습니다. <strong>해결된 문제가 있으면 피드백 부탁드립니다.</strong></span>")
+              f.write("<span style='margin-bottom:12px; display:block;'>- 자잘한 픽스나 번역은 원본 대신 HTML 링크로 백업되었으며, <strong>외부 링크(구드/메가)가 터지는 경우는 대처가 어렵습니다.</strong></span>")
+              f.write("<span style='margin-bottom:12px; display:block;'>- <strong>모드팩, 프리셋, 의상, 동료</strong> 등 주요 자료는 테라박스에 원본으로 백업되어 있습니다. <span style='color:#FFB000; font-weight:bold;'>(암호 확인 필수!)</span></span></p>")
+              f.write("<p style='border-top:1px solid #333; padding-top:20px; margin-top:20px;'>")
+              f.write("<strong>🎵 Music Credit:</strong><br>")
+              f.write("<span style='font-size:0.9em; color:#aaa;'>All BGM composed by <strong>Alexander Nakarada</strong> (Serpentsound Studios)<br>")
+              f.write("Licensed under Creative Commons BY 4.0<br>")
+              f.write("<a href='https://www.serpentsoundstudios.com' target='_blank' style='color:#58a6ff !important;'>https://www.serpentsoundstudios.com</a></span></p>")
+              f.write("<p style='border-top:1px solid #333; padding-top:20px; margin-top:20px;'><strong>✍️ 후기:</strong><br>공장장 이 개같은 년, 너 아니었음 이거 시작도 안 했어 알아? 알면 소븐가드에서 우릴 위해 술잔이나 들어달라고. <br>툴붕이들은 아프지 말고. 너네 없어지면 15년 동안 후속작 유기하는 토드 새끼 누가 욕해주냐?</p></div></div></div>")
+
+              # 헤더
+              f.write("<header class='top-header'><div class='header-container'><div>")
+              f.write("<button class='header-btn' id='btn-f' onclick='triggerTheme(\"ferry\")' style='border-color:#fff; color:#fff;'><img src='ship.PNG' style='width:22px; filter:invert(1) brightness(2); vertical-align:middle;'> Ferry (Skyrim)</button>")
+              f.write("<button class='header-btn' id='btn-v' onclick='triggerTheme(\"vault\")' style='border-color:#FFB000; color:#FFB000;'><img src='railroad.png' style='width:18px; filter: invert(1) sepia(1) saturate(5) hue-rotate(-10deg); vertical-align:middle; margin-top:-2px;'> Railroad (Fallout)</button></div>")
+              f.write("<div><button class='header-btn' style='border-color:#ccc; color:#ccc;' onclick='openModal()'>📖 가이드 & 후기</button>")
+              f.write("<a href='https://github.com/vapingexperienc3-max/Tullius-s-ferry/issues' target='_blank' class='header-btn' style='border-color:#58a6ff; color:#58a6ff;'>📢 피드백 제보</a></div></div></header>")
+
+              sf_final = f"<details open style='margin-bottom:15px;'><summary style='color:#fff; font-weight:bold; padding:5px 0; border-bottom:1px solid rgba(255,255,255,0.2); display:flex; align-items:center;'><img src='ElderScroll.webp' style='width:55px; margin-right:12px;'>모드팩 아카이브</summary><div style='padding-left:10px;'>{sidebar_data['ferry']['modpack']}</div></details>{sidebar_data['ferry']['normal']}"
+              srr_final = f"<details open style='margin-bottom:15px;'><summary style='color:#FFB000; font-weight:bold; padding:5px 0; border-bottom:1px solid rgba(255,176,0,0.3); display:flex; align-items:center;'><img src='pipboy.png' style='width:40px; margin-right:12px;'>모드팩 아카이브</summary><div style='padding-left:10px;'>{sidebar_data['railroad']['modpack']}</div></details>{sidebar_data['railroad']['normal']}"
+
+              f.write("<div id='main-wrapper' style='display:none;'><div class='sidebar-nav' id='main-lnb'><h3 id='idx-t' style='border-bottom:2px solid; padding-bottom:10px;'>INDEX</h3><div id='l-ferry'>" + sf_final + "</div><div id='l-vault' style='display:none;'>" + srr_final + "</div></div>")
+              f.write("<div class='main-area'><h1 id='t-f' style='display:none; color:#fff; font-size:4.5em; margin:0;'>Tullius' Ferry</h1><h1 id='t-v' style='display:none; color:#FFB000; font-size:4.5em; margin:0;'>The Sole Survivor's Railroad</h1><input type='text' id='search-bar' placeholder='파일 검색...' onkeyup='globalSearch()'><div id='a-ferry'>" + main_contents['ferry'] + "</div><div id='a-vault' style='display:none;'>" + main_contents['railroad'] + "</div></div></div>")
+              
+              f.write("<div id='welcome-screen' style='position: fixed; top: 70px; left: 0; width: 100vw; height: 100vh; background: #000; z-index: 2000; overflow: hidden;'><img src='welcome page.png' style='width: 100%; height: 100%; object-fit: cover; filter: brightness(0.5);'><div style='position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; width: 100%;'><h1 style='color:#fff; font-size:3.5em; margin-bottom:10px;'>환영합니다, 드래곤본과 생존자 여러분.상단의 버튼을 누르면 아카이브로 연결됩니다</h1><p style='color:#ccc; font-size:1.6em;'>가이드 & 후기 버튼도 한번씩 눌러주세요!</p></div></div>")
+              
+              f.write("<script>")
+              # 1. 초기 변수 및 테마 설정
+              f.write("let currentTheme = 'ferry'; let themeColor = '#ffffff';") # 스카이림 기본 연기색: 흰색
+              f.write("let particles = []; const canvas = document.createElement('canvas'); const ctx = canvas.getContext('2d');")
+              
+              # 2. 캔버스 초기화 및 문서 삽입
+              f.write("function setupCanvas(){")
+              f.write("  canvas.style.position='fixed'; canvas.style.top='0'; canvas.style.left='0';")
+              f.write("  canvas.style.width='100%'; canvas.style.height='100%'; canvas.style.pointerEvents='none'; canvas.style.zIndex='1';")
+              f.write("  canvas.width = window.innerWidth; canvas.height = window.innerHeight;")
+              f.write("  document.body.appendChild(canvas);")
+              f.write("}")
+              
+              f.write("function openModal(){ document.getElementById('guideModal').style.display='block'; }")
+              f.write("function closeModal(){ document.getElementById('guideModal').style.display='none'; }")
+              
+              # 3. 테마 전환 (연기 색상 변경 포함)
+              f.write("function triggerTheme(m){")
+              f.write("  currentTheme = m; themeColor = (m==='ferry') ? '#ffffff' : '#FFB000';")
+              f.write("  document.getElementById('welcome-screen').style.display='none';")
+              f.write("  document.getElementById('main-wrapper').style.display='flex';")
+              f.write("  switchTheme(m); document.getElementById('main-lnb').classList.add('active');")
+              f.write("  if(particles.length === 0) { setupCanvas(); initSmoke(); animate(); }")
+              f.write("  if(window.syncMusicWithTheme) window.syncMusicWithTheme(m);")
+              f.write("}")
+              
+              f.write("function switchTheme(m){ const b=document.body; if(m==='ferry'){ b.style.setProperty('background-image', \"linear-gradient(to top, rgba(0,0,0,0.8), rgba(0,0,0,0.4)), url('skyrim.png')\", 'important'); b.style.setProperty('background-position', 'center 10%', 'important'); document.getElementById('l-ferry').style.display='block'; document.getElementById('l-vault').style.display='none'; document.getElementById('t-f').style.display='block'; document.getElementById('t-v').style.display='none'; document.getElementById('a-ferry').style.display='block'; document.getElementById('a-vault').style.display='none'; } else { b.style.setProperty('background-image', \"linear-gradient(to top, rgba(0,0,0,0.8), rgba(0,0,0,0.4)), url('fallout.png')\", 'important'); b.style.setProperty('background-position', 'center top 70px', 'important'); document.getElementById('l-ferry').style.display='none'; document.getElementById('l-vault').style.display='block'; document.getElementById('t-f').style.display='none'; document.getElementById('t-v').style.display='block'; document.getElementById('a-ferry').style.display='none'; document.getElementById('a-vault').style.display='block'; } }")
+
+              # 4. 연기 효과 물리 로직
+              f.write("class Particle { constructor(){ this.reset(); } reset(){ this.x = Math.random() * canvas.width; this.y = canvas.height + 150; this.size = Math.random() * 120 + 80; this.speedY = Math.random() * 0.7 + 0.4; this.speedX = Math.random() * 0.6 - 0.3; this.opacity = Math.random() * 0.15 + 0.05; this.rotation = Math.random() * Math.PI * 2; this.rotSpeed = Math.random() * 0.015 - 0.007; this.growth = Math.random() * 0.3 + 0.2; } update(){ this.y -= this.speedY; this.x += this.speedX + Math.sin(this.y * 0.005) * 0.5; this.size += this.growth; this.rotation += this.rotSpeed; this.opacity -= 0.0003; if(this.opacity <= 0 || this.y < -400) this.reset(); } draw(){ ctx.save(); ctx.translate(this.x, this.y); ctx.rotate(this.rotation); ctx.globalCompositeOperation = 'screen'; let grad = ctx.createRadialGradient(0,0,0,0,0,this.size); grad.addColorStop(0, themeColor + Math.floor(this.opacity*255).toString(16).padStart(2,'0')); grad.addColorStop(0.5, themeColor + Math.floor(this.opacity*40).toString(16).padStart(2,'0')); grad.addColorStop(1, 'transparent'); ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(0,0,this.size,0,Math.PI*2); ctx.fill(); ctx.restore(); } }")
+              f.write("function initSmoke(){ particles = []; for(let i=0; i<45; i++) particles.push(new Particle()); }")
+              f.write("function animate(){ ctx.clearRect(0,0,canvas.width, canvas.height); particles.forEach(p=>{ p.update(); p.draw(); }); requestAnimationFrame(animate); }")
+              f.write("window.onresize = ()=>{ canvas.width = window.innerWidth; canvas.height = window.innerHeight; };")
+
+              f.write("function showCat(fid){ document.querySelectorAll('.cat-content').forEach(c=>c.style.display='none'); document.querySelectorAll('.sidebar-link').forEach(l=>l.classList.remove('active')); const target = document.getElementById(fid); if(target) target.style.display='block'; const link = document.getElementById('l-'+fid); if(link) link.classList.add('active'); window.scrollTo({top:0,behavior:'smooth'}); }")
+              
+              # 5. 검색 로직 (기존 코드 유지)
+              f.write("function globalSearch(){ ")
+              f.write("  let q = document.getElementById('search-bar').value.toLowerCase(); ")
+              f.write("  let targetID = (currentTheme === 'ferry') ? 'a-ferry' : 'a-vault'; ")
+              f.write("  let container = document.getElementById(targetID); ")
+              f.write("  let cats = container.querySelectorAll('.cat-content'); ")
+              f.write("  if(q === ''){ cats.forEach(cat => { cat.style.display = 'none'; cat.querySelectorAll('li, .tree-node').forEach(el => el.style.display = 'block'); cat.querySelectorAll('details').forEach(d => d.open = true); }); switchTheme(currentTheme); return; } ")
+              f.write("  container.style.display = 'block'; ")
+              f.write("  cats.forEach(cat => { ")
+              f.write("    let fileLinks = cat.querySelectorAll('a[class^=\"file-link-\"]'); let catHasMatch = false; ")
+              f.write("    fileLinks.forEach(a => { let li = a.parentElement; if(a.innerText.toLowerCase().includes(q)){ li.style.setProperty('display', 'block', 'important'); catHasMatch = true; } else { li.style.setProperty('display', 'none', 'important'); } }); ")
+              f.write("    cat.querySelectorAll('.tree-node').forEach(node => { let nodeHasMatch = Array.from(node.querySelectorAll('li')).some(li => li.style.display !== 'none'); if(nodeHasMatch){ node.style.setProperty('display', 'block', 'important'); node.querySelector('details').open = true; } else { node.style.setProperty('display', 'none', 'important'); } }); ")
+              f.write("    cat.style.display = catHasMatch ? 'block' : 'none'; ")
+              f.write("  }); ")
+              f.write("} \n") # globalSearch 함수 끝
+
+              # --- 통합 BGM 로직 시작 ---
+              f.write("const playlists = {\n")
+              f.write("  skyrim: [\n")
+              f.write("    {name:'1. Adventure', file:'1.Adventure(remaster).mp3'},\n")
+              f.write("    {name:'2. Marked', file:'2.Marked.mp3'},\n")
+              f.write("    {name:'3. Forest Walk', file:'3.Forest_Walk.mp3'},\n")
+              f.write("    {name:'4. The Lone Wolf', file:'4.The_Lone_Wolf.mp3'},\n")
+              f.write("    {name:'5. Dragonquest', file:'5.Dragonquest.mp3'},\n")
+              f.write("    {name:'6. Daudir', file:'6.Daudir.mp3'},\n")
+              f.write("    {name:'7. Hymn to the Gods', file:'7.Hymn_to_the_Gods.mp3'},\n")
+              f.write("    {name:'8. The Road Home', file:'8.The_Road_Home_2023.mp3'},\n")
+              f.write("    {name:'9. Mjolnir', file:'9.Mjolnir.mp3'},\n")
+              f.write("    {name:'10. Adventure(Metal)', file:'10.Adventure(Metal_Version).mp3'}\n")
+              f.write("  ],\n")
+              f.write("  fallout: [\n")
+              f.write("    {name:'1. Happy', file:'1.Happy.mp3'},\n")
+              f.write("    {name:'2. Degenerate Blues', file:'2.Degenerate_Blues.mp3'},\n")
+              f.write("    {name:'3. Stoned', file:'3.Stoned(no_guitar_solo).mp3'},\n")
+              f.write("    {name:'4. Be Chillin', file:'4.Be_Chillin.mp3'},\n")
+              f.write("    {name:'5. Nightfall', file:'5.Nightfall.mp3'},\n")
+              f.write("    {name:'6. Apocalypse Blues', file:'6.Apocalypse_Blues.mp3'},\n")
+              f.write("    {name:'7. Through the Mist', file:'7.Through_the_Mist.mp3'},\n")
+              f.write("    {name:'8. The Collapse', file:'8.The_Collapse.mp3'},\n")
+              f.write("    {name:'9. Lullaby', file:'9.Lullaby.mp3'}\n")
+              f.write("  ]\n")
+              f.write("};\n")
+
+              f.write("let currentMode = 'skyrim'; let currIdx = 0;\n")
+              f.write("const audio = document.getElementById('main-audio');\n")
+              f.write("const tInfo = document.getElementById('track-info');\n")
+              f.write("const pBtn = document.getElementById('play-btn');\n")
+              f.write("const vSld = document.getElementById('volume-slider');\n")
+
+              # 1. loadTrack 함수 (독립)
+              f.write("function loadTrack(mode, idx) {\n")
+              f.write("  currentMode = mode;\n")
+              f.write("  currIdx = idx;\n")
+              f.write("  const track = playlists[mode][idx];\n")
+              f.write("  audio.src = track.file;\n")
+              f.write("  tInfo.innerText = track.name;\n")
+              f.write("  audio.volume = vSld.value;\n")
+              f.write("}\n")
+
+              # 2. togglePlay 함수 수정
+              f.write("window.togglePlay = function() {\n")
+              f.write("  if(audio.paused) {\n")
+              # 만약 src가 비어있거나 초기 상태라면 다시 한번 로드 시도
+              f.write("    if(!audio.src || audio.currentTime === 0) {\n")
+              f.write("       loadTrack(currentMode, currIdx);\n")
+              f.write("    }\n")
+              f.write("    const playPromise = audio.play();\n")
+              f.write("    if (playPromise !== undefined) {\n")
+              f.write("      playPromise.then(_ => {\n")
+              f.write("        pBtn.innerText = '\u23f8';\n") # 일시정지 아이콘
+              f.write("      }).catch(e => {\n")
+              f.write("        console.log('재생 실패:', e);\n")
+              f.write("      });\n")
+              f.write("    }\n")
+              f.write("  } else {\n")
+              f.write("    audio.pause();\n")
+              f.write("    pBtn.innerText = '▶';\n")
+              f.write("  }\n")
+              f.write("};\n")
+
+              # 테마 전환 시 호출할 외부 함수
+              f.write("window.syncMusicWithTheme = function(theme) {\n")
+              f.write("  const newMode = (theme === 'vault') ? 'fallout' : 'skyrim';\n")
+              f.write("  if(currentMode !== newMode) {\n")
+              f.write("    const wasPlaying = !audio.paused;\n")
+              f.write("    loadTrack(newMode, 0);\n")
+              f.write("    if(wasPlaying) audio.play();\n")
+              f.write("  }\n")
+              f.write("};\n")
+
+              # 다음/이전 곡 버튼 함수
+              f.write("window.changeTrack = function(dir) {\n")
+              f.write("  const list = playlists[currentMode];\n")
+              f.write("  currIdx = (currIdx + dir + list.length) % list.length;\n")
+              f.write("  const wasPlaying = !audio.paused;\n")
+              f.write("  loadTrack(currentMode, currIdx);\n")
+              # 브라우저 정책 대응: play()가 리턴하는 Promise 처리
+              f.write("  if(wasPlaying) {\n")
+              f.write("    const playPromise = audio.play();\n")
+              f.write("    if (playPromise !== undefined) {\n")
+              f.write("      playPromise.then(_ => { pBtn.innerText='⏸'; }).catch(error => { console.log('재생 차단됨'); });\n")
+              f.write("    }\n")
+              f.write("  }\n")
+              f.write("};\n")
+
+              # 곡 종료 시 자동 재생
+              f.write("audio.onended = () => { \n")
+              f.write("  const list = playlists[currentMode];\n")
+              f.write("  currIdx = (currIdx + 1) % list.length;\n")
+              f.write("  loadTrack(currentMode, currIdx);\n")
+              f.write("  audio.play().catch(e => console.log('자동재생 대기'));\n")
+              f.write("};\n")
+              
+              f.write("vSld.oninput = () => { audio.volume = vSld.value; };\n")
+              # [중요] 초기 로드 시 재생하지 않고 '준비'만 해둠
+              f.write("loadTrack('skyrim', 0);\n")
+              
+              # 사용자가 첫 클릭을 할 때 오디오 컨텍스트를 활성화하는 '잠금 해제' 로직
+              f.write("document.addEventListener('click', () => {\n")
+              f.write("  if (audio.src && audio.paused && currIdx === 0 && audio.currentTime === 0) {\n")
+              # 이 부분은 사용자가 사이트 어디든 처음 클릭하면 음악이 시작되게 함 (선택 사항)
+              # f.write("    // audio.play().catch(e => {}); \n") 
+              f.write("  }\n")
+              f.write("}, {once: true});\n")
+              # --- BGM 로직 끝 ---
+              f.write("</script></body></html>")
+          EOF
+
+      # 1. 여기서부터는 - name: Checkout repository 와 같은 세로줄에 맞춰야 합니다. (보통 공백 6칸)
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+
+  # 2. 여기서부터는 위쪽의 build: 와 똑같이 맨 왼쪽(공백 2칸)으로 바짝 붙어야 합니다.
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+            
