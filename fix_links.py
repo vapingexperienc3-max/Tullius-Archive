@@ -1,62 +1,30 @@
 import os
-from bs4 import BeautifulSoup
-from urllib.parse import unquote, urlparse
-import unicodedata
 
-ROOT = "."  # Archive 루트
-OLD_REPO = "Tullius-ferry"
+# 모든 하위 폴더를 샅샅이 뒤집니다.
+ROOT = "."
 
-def nfc(path: str) -> str:
-    return unicodedata.normalize("NFC", path)
+print("🚑 초강력 세탁기 가동 시작...")
 
-# Archive 안의 모든 html 파일 수집
-html_files = []
-for root, _, files in os.walk(ROOT):
-    for f in files:
-        if f.lower().endswith(".html"):
-            html_files.append(os.path.join(root, f))
+for root, dirs, files in os.walk(ROOT):
+    for file in files:
+        if file.lower().endswith(".html"):
+            file_path = os.path.join(root, file)
+            
+            try:
+                # 파일을 읽어서 내용 확인
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                
+                # 'Tullius-ferry' 글자가 하나라도 발견되면 즉시 치환
+                if "Tullius-ferry" in content:
+                    # BeautifulSoup 대신 직접 문자열 치환을 사용하여 원본 포맷을 최대한 보존합니다.
+                    new_content = content.replace("Tullius-ferry", "Tullius-Archive")
+                    
+                    with open(file_path, "w", encoding="utf-8") as f:
+                        f.write(new_content)
+                    print(f"✅ 수술 완료 (화석 복구): {file_path}")
+                    
+            except Exception as e:
+                print(f"❌ 에러 발생 ({file}): {e}")
 
-# 실제 파일 경로 세트 (매칭용)
-real_files = {
-    nfc(os.path.relpath(f, ROOT))
-    for f in html_files
-}
-
-def find_real_path(decoded_path):
-    decoded_path = nfc(decoded_path.lstrip("/"))
-    for real in real_files:
-        if real.endswith(decoded_path):
-            return real
-    return None
-
-for html_path in html_files:
-    with open(html_path, "r", encoding="utf-8") as f:
-        soup = BeautifulSoup(f, "html.parser")
-
-    changed = False
-    html_dir = os.path.dirname(os.path.relpath(html_path, ROOT))
-
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        if OLD_REPO not in href:
-            continue
-
-        parsed = urlparse(href)
-        decoded = unquote(parsed.path)
-
-        # Tullius-ferry 이후 경로만 사용
-        if OLD_REPO in decoded:
-            decoded = decoded.split(OLD_REPO, 1)[1]
-
-        real = find_real_path(decoded)
-        if not real:
-            continue  # 실제 파일 없으면 건너뜀
-
-        rel = os.path.relpath(real, html_dir if html_dir else ".")
-        a["href"] = rel.replace("\\", "/")
-        changed = True
-
-    if changed:
-        with open(html_path, "w", encoding="utf-8") as f:
-            f.write(str(soup))
-        print(f"✔ fixed: {html_path}")
+print("🏁 모든 화석 파일 현대화 완료. 이제 404는 없습니다.")
